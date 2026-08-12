@@ -1,0 +1,64 @@
+import numpy as np
+import os
+
+def get_point_count_deeper_than(vtk_file_path, target_depth):
+    if not os.path.exists(vtk_file_path):
+        print(f"檔案不存在: {vtk_file_path}")
+        return 0
+
+    with open(vtk_file_path, 'r') as f:
+        lines = f.readlines()
+
+    start_idx = 0
+    num_points = 0
+    for i, line in enumerate(lines):
+        if line.startswith("POINTS"):
+            num_points = int(line.split()[1])
+            start_idx = i + 1
+            break
+
+    if num_points == 0:
+        return 0
+
+    points_data = []
+    for i in range(start_idx, start_idx + num_points):
+        if i < len(lines):
+            row = lines[i].strip().split()
+            if len(row) == 3:
+                points_data.append([float(val) for val in row])
+
+    points = np.array(points_data)
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+
+    earth_radius = 6371.0
+    r = np.sqrt(x**2 + y**2 + z**2)
+    depth = (1.0 - r) * earth_radius
+
+    mask = depth > target_depth
+    return np.sum(mask)
+
+def compare_plates(file1, file2, target_depth):
+    count1 = get_point_count_deeper_than(file1, target_depth)
+    count2 = get_point_count_deeper_than(file2, target_depth)
+
+    print(f"設定深度條件: 大於 {target_depth} km\n")
+    print(f"板塊 1 ({file1}) 點數量: {count1}")
+    print(f"板塊 2 ({file2}) 點數量: {count2}")
+
+    if count2 > 0:
+        ratio = count1 / count2
+        print(f"數量比例 (板塊 1 / 板塊 2): {ratio:.4f}")
+    elif count1 > 0 and count2 == 0:
+        print("板塊 2 在此深度下無資料，無法計算比例 (板塊 1 佔 100%)")
+    else:
+        print("兩個板塊在此深度下皆無資料點")
+
+if __name__ == "__main__":
+    plate1_file = 'p001.9998.06.vtk'
+    plate2_file = 'p001.9997.06.vtk'
+
+    target_depth = 255.0
+
+    compare_plates(plate1_file, plate2_file, target_depth)
