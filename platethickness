@@ -1,0 +1,73 @@
+import numpy as np
+
+def analyze_slab_depth(vtk_file_path, lon_min, lon_max, lat_min, lat_max):
+    with open(vtk_file_path, 'r') as f:
+        lines = f.readlines()
+
+    start_idx = 0
+    num_points = 0
+    for i, line in enumerate(lines):
+        if line.startswith("POINTS"):
+            num_points = int(line.split()[1])
+            start_idx = i + 1
+            break
+
+    if num_points == 0:
+        print("檔案讀取失敗或無資料點")
+        return None
+
+    points_data = []
+    for i in range(start_idx, start_idx + num_points):
+        if i < len(lines):
+            row = lines[i].strip().split()
+            if len(row) == 3:
+                points_data.append([float(val) for val in row])
+
+    points = np.array(points_data)
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+
+    earth_radius = 6371.0
+
+    r = np.sqrt(x**2 + y**2 + z**2)
+    lat = np.arcsin(z / r) * (180.0 / np.pi)
+    lon = np.arctan2(y, x) * (180.0 / np.pi)
+    depth = (1.0 - r) * earth_radius
+
+    mask = (lon >= lon_min) & (lon <= lon_max) & (lat >= lat_min) & (lat <= lat_max)
+
+    valid_lon = lon[mask]
+    valid_lat = lat[mask]
+    valid_depth = depth[mask]
+    valid_points = points[mask]
+
+    if len(valid_depth) == 0:
+        print("自訂範圍內找不到資料點")
+        return None
+
+    max_depth_idx = np.argmax(valid_depth)
+    deepest_lon = valid_lon[max_depth_idx]
+    deepest_lat = valid_lat[max_depth_idx]
+    max_depth = valid_depth[max_depth_idx]
+    deepest_xyz = valid_points[max_depth_idx]
+
+    min_depth = np.min(valid_depth)
+    thickness_variation = max_depth - min_depth
+
+    print(f"自訂範圍: 經度 {lon_min} ~ {lon_max}, 緯度 {lat_min} ~ {lat_max}")
+    print(f"符合點數: {len(valid_depth)}")
+    print(f"最深點經緯: ({deepest_lon:.4f}, {deepest_lat:.4f})")
+    print(f"最深點深度: {max_depth:.2f} km")
+    print(f"最深點卡氏座標: ({deepest_xyz[0]:.6f}, {deepest_xyz[1]:.6f}, {deepest_xyz[2]:.6f})")
+    print(f"板塊厚度變化: {thickness_variation:.2f} km")
+
+if __name__ == "__main__":
+    vtk_file = 'p001.9996.05.vtk'
+
+    target_lon_min = 52.0
+    target_lon_max = 55.0
+    target_lat_min = 25.0
+    target_lat_max = 35.0
+
+    analyze_slab_depth(vtk_file, target_lon_min, target_lon_max, target_lat_min, target_lat_max)
