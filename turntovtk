@@ -1,0 +1,51 @@
+%%bash
+
+cd /content/pfiles
+
+plate_ids=(11 13 21 23 311 411 444 51 53 61 9999 9998 9997 9996 9995 9994)
+
+for idump in $(seq -w 01 06); do
+    files=(p001.*."$idump")
+    [ ${#files[@]} -eq 0 ] && continue
+
+    for id in "${plate_ids[@]}"; do
+        rm -f "p001.${id}.${idump}_merge"
+    done
+
+    awk -v dump="$idump" -v ids="${plate_ids[*]}" '
+    BEGIN {
+        split(ids, a, " ")
+        for (i in a) wanted[a[i]] = 1
+    }
+    FNR == 1 {
+        prev = $0
+        next
+    }
+    NF >= 2 && (($2 + 0) in wanted) {
+        out = "p001." ($2 + 0) "." dump "_merge"
+        print prev >> out
+    }
+    {
+        prev = $0
+    }
+    ' "${files[@]}"
+
+    for id in "${plate_ids[@]}"; do
+        merge="p001.${id}.${idump}_merge"
+        vtk="p001.${id}.${idump}.vtk"
+
+        [ ! -s "$merge" ] && continue
+        gridpoints=$(wc -l < "$merge")
+
+        {
+            echo "# vtk DataFile Version 3.0"
+            echo "xyz2vtkpts"
+            echo "ASCII"
+            echo "DATASET POLYDATA"
+            echo "POINTS $gridpoints float"
+            awk '{print $1/6371000, $2/6371000, $3/6371000}' "$merge"
+        } > "$vtk"
+
+        rm -f "$merge"
+    done
+done
