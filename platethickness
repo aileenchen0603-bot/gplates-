@@ -1,6 +1,11 @@
 import numpy as np
+import os
 
-def analyze_slab_depth(vtk_file_path, lon_min, lon_max, lat_min, lat_max):
+def analyze_continuous_slab_thickness(vtk_file_path, lon_step=5.0):
+    if not os.path.exists(vtk_file_path):
+        print(f"\n檔案不存在: {vtk_file_path}")
+        return
+
     with open(vtk_file_path, 'r') as f:
         lines = f.readlines()
 
@@ -13,8 +18,8 @@ def analyze_slab_depth(vtk_file_path, lon_min, lon_max, lat_min, lat_max):
             break
 
     if num_points == 0:
-        print("檔案讀取失敗或無資料點")
-        return None
+        print(f"\n檔案讀取失敗或無資料點: {vtk_file_path}")
+        return
 
     points_data = []
     for i in range(start_idx, start_idx + num_points):
@@ -35,39 +40,40 @@ def analyze_slab_depth(vtk_file_path, lon_min, lon_max, lat_min, lat_max):
     lon = np.arctan2(y, x) * (180.0 / np.pi)
     depth = (1.0 - r) * earth_radius
 
-    mask = (lon >= lon_min) & (lon <= lon_max) & (lat >= lat_min) & (lat <= lat_max)
+    min_lon_data = np.min(lon)
+    max_lon_data = np.max(lon)
 
-    valid_lon = lon[mask]
-    valid_lat = lat[mask]
-    valid_depth = depth[mask]
-    valid_points = points[mask]
+    bin_start = np.floor(min_lon_data / lon_step) * lon_step
+    bin_end = np.ceil(max_lon_data / lon_step) * lon_step
 
-    if len(valid_depth) == 0:
-        print("自訂範圍內找不到資料點")
-        return None
+    bins = np.arange(bin_start, bin_end + lon_step, lon_step)
 
-    max_depth_idx = np.argmax(valid_depth)
-    deepest_lon = valid_lon[max_depth_idx]
-    deepest_lat = valid_lat[max_depth_idx]
-    max_depth = valid_depth[max_depth_idx]
-    deepest_xyz = valid_points[max_depth_idx]
+    print(f"\n檔案: {vtk_file_path}")
+    print(f"經度劃分區間: {lon_step} 度")
+    print("-" * 75)
 
-    min_depth = np.min(valid_depth)
-    thickness_variation = max_depth - min_depth
+    for i in range(len(bins) - 1):
+        lon_min = bins[i]
+        lon_max = bins[i+1]
 
-    print(f"自訂範圍: 經度 {lon_min} ~ {lon_max}, 緯度 {lat_min} ~ {lat_max}")
-    print(f"符合點數: {len(valid_depth)}")
-    print(f"最深點經緯: ({deepest_lon:.4f}, {deepest_lat:.4f})")
-    print(f"最深點深度: {max_depth:.2f} km")
-    print(f"最深點卡氏座標: ({deepest_xyz[0]:.6f}, {deepest_xyz[1]:.6f}, {deepest_xyz[2]:.6f})")
-    print(f"板塊厚度變化: {thickness_variation:.2f} km")
+        mask = (lon >= lon_min) & (lon < lon_max)
+        valid_depth = depth[mask]
+
+        if len(valid_depth) > 0:
+            valid_lon = lon[mask]
+            valid_lat = lat[mask]
+
+            max_depth_idx = np.argmax(valid_depth)
+            max_depth = valid_depth[max_depth_idx]
+            deepest_lon = valid_lon[max_depth_idx]
+            deepest_lat = valid_lat[max_depth_idx]
+
+            min_depth = np.min(valid_depth)
+            thickness_variation = max_depth - min_depth
+
+            print(f"經度 {lon_min:5.1f} ~ {lon_max:5.1f} | 最深點經緯: ({deepest_lon:6.2f}, {deepest_lat:6.2f}) | 深度: {max_depth:6.2f} km | 厚度變化: {thickness_variation:6.2f} km")
 
 if __name__ == "__main__":
-    vtk_file = 'p001.9996.05.vtk'
-
-    target_lon_min = 52.0
-    target_lon_max = 55.0
-    target_lat_min = 25.0
-    target_lat_max = 35.0
-
-    analyze_slab_depth(vtk_file, target_lon_min, target_lon_max, target_lat_min, target_lat_max)
+    for i in range(1, 7):
+        vtk_file = f'p001.9998.{i:02d}.vtk'
+        analyze_continuous_slab_thickness(vtk_file, lon_step=5.0)
