@@ -1,8 +1,12 @@
 import numpy as np
 from shapely.geometry import Point, Polygon
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import glob
 import os
 import re
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 
 #===================================================================
 # Step1: Points
@@ -62,18 +66,16 @@ def grdgen(nt):
                     xn[i1, i2, id - 1] /= np.linalg.norm(xn[i1, i2, id - 1])
     return xn
 
-
-def midptgen(xn, nt):
+def midptgen(xn,nt):
     xm = np.zeros((nt, nt, 10, 3))
     for id in range(1, 11):
       for i1 in range(nt):
         for i2 in range(nt):
-          xm[i1, i2, id - 1] = (xn[i1, i2, id - 1] + xn[i1 + 1 , i2 + 1, id - 1]) / 2.0
+          xm[i1, i2, id - 1] = (xn[i1, i2, id - 1] + xn[i1 +1 , i2 + 1, id - 1]) / 2.0
           xm[i1, i2, id - 1] /= np.linalg.norm(xm[i1, i2, id - 1])
     return xm
 
-
-def xyz2latlon(xm, nt):
+def xyz2latlon(xm,nt):
     llm_ori = np.zeros((nt, nt, 10, 2))
     for id in range(10):
             for i in range(xm.shape[0]):
@@ -84,36 +86,68 @@ def xyz2latlon(xm, nt):
                         z = xm[i, j, id, 2]
                         lon = np.degrees(np.arctan2(y, x))
                         lat = np.degrees(np.arcsin(z / np.linalg.norm([x, y, z])))
-                        llm_ori[i, j, id, 0] = lon
-                        llm_ori[i, j, id, 1] = lat
+                        llm_ori [i, j, id, 0] = lon
+                        llm_ori [i, j, id, 1] = lat
     return llm_ori
 
+#===================================================================
+# Plotting functions
+#===================================================================
+def plot_all_points(plot_data):
+    if not plot_data:
+        print("沒有收集到任何點可供畫圖。")
+        return
+
+    plt.figure(figsize=(12, 6))
+
+    colors = cm.rainbow(np.linspace(0, 1, len(plot_data)))
+
+    for idx, (attri, points) in enumerate(plot_data.items()):
+        if not points:
+            continue
+        lons, lats = zip(*points)
+        plt.scatter(lons, lats, marker=".", color=colors[idx], label=f"ID: {attri}", s=15)
+
+    plt.xlim(-180, 360)
+    plt.ylim(-90, 90)
+    plt.xlabel("Longitude")
+    plt.ylabel("Latitude")
+    plt.title("All Plates Overview (Networks auto-numbered)")
+
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', markerscale=3)
+    plt.grid(True, linestyle='--', alpha=0.6)
+
+    plt.tight_layout()
+    plt.show()
 
 #===================================================================
-# Step2: Polygons (Network auto-numbering logic)
+# Step2: Polygons (加入遞減計數器邏輯)
 #===================================================================
-def process_polygon(nnt, llm_ori, polygon_file_path, age, network_id_counter):
+def process_polygon(nnt, llm_ori, polygon_file_path, age, plot_data, network_id_counter):
         with open(polygon_file_path, 'r') as polygon_file:
             polygon_vertices = []
             ir_min = 125
             ir_max = 128
 
+            # 初始設為 None，代表「目前還沒找到 ID」
             current_attri = None
 
             for line in polygon_file:
                 if line.startswith('>'):
                     if polygon_vertices:
-                        find_points_within_polygon(nnt, current_attri, ir_min, ir_max, llm_ori, polygon_vertices, age)
+                        find_points_within_polygon(nnt, current_attri, ir_min, ir_max, llm_ori, polygon_vertices, age, plot_data)
                         polygon_vertices = []
+                        # 處理完前一個後，重置為 None，準備讀取下一個
                         current_attri = None
 
                     match = re.search(r'reconstructionPlateId\s+(\d+)', line)
                     if match:
                        current_attri = int(match.group(1))
                 else:
+                    # 讀到第一個座標點時，標頭已經結束。檢查是否有找到 ID
                     if current_attri is None:
                         current_attri = network_id_counter
-                        network_id_counter -= 1
+                        network_id_counter -= 1 # 賦值後，計數器減 1 (9999 -> 9998)
 
                     polygon_vertices.append(tuple(map(float, line.strip().split())))
 
@@ -121,20 +155,20 @@ def process_polygon(nnt, llm_ori, polygon_file_path, age, network_id_counter):
                 if current_attri is None:
                     current_attri = network_id_counter
                     network_id_counter -= 1
-                find_points_within_polygon(nnt, current_attri, ir_min, ir_max, llm_ori, polygon_vertices, age)
+                find_points_within_polygon(nnt, current_attri, ir_min, ir_max, llm_ori, polygon_vertices, age, plot_data)
 
+        # 回傳處理完畢後的計數器數值，讓下一個檔案可以接續使用
         return network_id_counter
 
+#===================================================================
+# Step3: Points within polygons
+#===================================================================
+def wrap_longitude(lon):
+    return lon if lon >= 0 else lon + 360
 
-#===================================================================
-# Step3: Points within polygons (Dynamic Shift Logic Included)
-#===================================================================
-def find_points_within_polygon(nnt, attri, ir_min, ir_max, llm_ori, polygon_vertices, age):
+def find_points_within_polygon(nnt, attri, ir_min, ir_max, llm_ori, polygon_vertices, age, plot_data):
     # 1. 取得多邊形的所有經度並排序
     lons = sorted([p[0] for p in polygon_vertices])
-
-    if not lons:
-        return
 
     # 2. 尋找這個板塊在地球上沒有覆蓋到的「最大經度缺口」
     max_gap = 0
@@ -154,7 +188,7 @@ def find_points_within_polygon(nnt, attri, ir_min, ir_max, llm_ori, polygon_vert
     if gap_center > 180:
         gap_center -= 360
 
-    # 3. 計算平移量，把最大缺口對齊到地圖邊界 (+/- 180)
+    # 3. 計算平移量，我們要把最大缺口對齊到地圖邊界 (+/- 180)
     shift = 180 - gap_center
 
     def shift_lon(lon):
@@ -165,12 +199,10 @@ def find_points_within_polygon(nnt, attri, ir_min, ir_max, llm_ori, polygon_vert
     shifted_vertices = [(shift_lon(lon), lat) for lon, lat in polygon_vertices]
     polygon = Polygon(shifted_vertices)
 
+    points_within_polygon = []
     output_files = {}
 
-    # 確保輸出目錄存在，避免 open() 報錯
-    os.makedirs("./ptwithin", exist_ok=True)
-
-    # 5. 判斷網格點並寫入檔案
+    # 5. 判斷網格點 (不需要再另外建一個 llm 矩陣，直接邊讀邊判斷省記憶體)
     for id in range(llm_ori.shape[2]):
         process_id = 0
         for j in range(llm_ori.shape[1]):
@@ -191,6 +223,9 @@ def find_points_within_polygon(nnt, attri, ir_min, ir_max, llm_ori, polygon_vert
 
                 # 讓 Shapely 在沒有邊界干擾的平移空間中做判斷
                 if Point(shifted_p_lon, lat).within(polygon):
+                    # 判定在板塊內後，畫圖與存檔依然使用【原始座標】
+                    points_within_polygon.append((lon, lat))
+
                     for ir in range(ir_min, ir_max+1):
                         if process_id not in output_files:
                             filename = f"./ptwithin/pt.{process_id-1:04}.{int(age):03d}"
@@ -199,6 +234,11 @@ def find_points_within_polygon(nnt, attri, ir_min, ir_max, llm_ori, polygon_vert
 
     for file_handle in output_files.values():
         file_handle.close()
+
+    if points_within_polygon:
+        if attri not in plot_data:
+            plot_data[attri] = []
+        plot_data[attri].extend(points_within_polygon)
 
 
 #===================================================================
@@ -226,40 +266,44 @@ def write_vtk(filename, xn):
             process_id = 0
             for j in range(xn.shape[1]):
                 for i in range(xn.shape[0]):
-                    i1 = i % 16
-                    i2 = j % 16
+                    i1 = i% 16
+                    i2 = j% 16
                     if i1 == 0 and i2 == 0:
                         process_id = process_id + 1
                     f.write("{}\n".format(process_id))
 
-
 #===================================================================
 # Main functions
 #===================================================================
-if __name__ == "__main__":
-    nnt = 16
-    nt = 256  # 產出高解析度檔案
+nnt = 16
+nt = 2256 # 測試畫圖用，若要產出高解析度檔案請改回 256
 
-    polygon_file_paths = glob.glob("./plates/Polygon_*.xy")
+polygon_file_paths = glob.glob("./plates/Polygon_*.xy")
 
-    xn = grdgen(nt)
-    print(f"grid nodes generations are done!")
+xn = grdgen(nt)
+print(f"grid nodes generations are done!")
 
-    xm = midptgen(xn, nt)
-    filename = "xm.vtk"
-    write_vtk(filename, xm)
+xm = midptgen(xn, nt)
+filename = "xm.vtk"
+write_vtk(filename, xm)
 
-    llm_ori = xyz2latlon(xm, nt)
-    print(f"mid points generations are done!")
+llm_ori = xyz2latlon(xm,nt)
+print(f"mid points generations are done!")
 
-    # 宣告一開始的計數器為 9999，供找不到 ID 的特徵遞減使用
-    current_network_id = 9999
+plot_data = {}
 
-    for polygon_file_path in polygon_file_paths:
-        age_str = os.path.splitext(os.path.basename(polygon_file_path))[0].split('_')[1]
-        age = float(age_str)  # 確保 age 可以轉為數值格式
-        print(f"start processing polygon at {age} Ma")
+# 宣告一開始的計數器為 9999
+current_network_id = 9999
 
-        current_network_id = process_polygon(nnt, llm_ori, polygon_file_path, age, current_network_id)
+for polygon_file_path in polygon_file_paths:
+    age = os.path.splitext(os.path.basename(polygon_file_path))[0].split('_')[1]
+    print(f"start processing polygon at {age} Ma")
 
-    print(f"File generations completed!")
+    # 將 current_network_id 傳入函數，並將回傳更新後的數值接住
+    # 這樣如果有好幾個檔案，編號就會一直遞減延續下去 (9999 -> 9998 -> 9997...)
+    current_network_id = process_polygon(nnt, llm_ori, polygon_file_path, age, plot_data, current_network_id)
+
+print(f"File generations completed! Now plotting...")
+
+# 呼叫總圖繪製功能
+plot_all_points(plot_data)
