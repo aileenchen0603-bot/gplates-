@@ -276,7 +276,7 @@ def write_vtk(filename, xn):
 # Main functions
 #===================================================================
 nnt = 16
-nt = 2256 # 測試畫圖用，若要產出高解析度檔案請改回 256
+nt = 256 # 測試畫圖用，若要產出高解析度檔案請改回 256
 
 polygon_file_paths = glob.glob("./plates/Polygon_*.xy")
 
